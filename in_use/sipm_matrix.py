@@ -81,8 +81,9 @@ def main():
 
     overlap = set(c_channels) & set(d_channels)
     if overlap:
-        sys.exit(f"ERREUR : channel(s) {sorted(overlap)} present(s) a la fois dans "
-                  f"--c-channels et --d-channels -- chaque extremite lue doit etre C ou D, pas les deux.")
+        print(f"NOTE : channel(s) {sorted(overlap)} present(s) a la fois dans --c-channels "
+              f"et --d-channels -- leur(s) case(s) affichera(ont) un comptage double (C+D du "
+              f"meme channel).", file=sys.stderr)
 
     print(f"Lecture de {args.bin_path} ...")
     counts = load_channel_counts(args.bin_path)
