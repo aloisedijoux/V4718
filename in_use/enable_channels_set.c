@@ -28,9 +28,11 @@
 
 #define MAX_POLL_ATTEMPTS   100000
 #define MAX_CHANNELS        32  /* EN_CHANNEL (0x40nn) takes the channel index as a plain byte,
-                                    so it works unchanged up to channel 31 (V1290A). Readback
-                                    verification below is still limited to channels 0-15: see
-                                    the comment in enable_channel_set(). */
+                                    so it works unchanged up to channel 31 (V1290A). The actual
+                                    model is auto-detected at runtime (see caen_v1290_is_model_a
+                                    in caen_open.h) to know how many channels/readback words to
+                                    expect; this is just the syntactic upper bound before we have
+                                    a handle to check against. */
 
 static int micro_write(int handle, uint16_t word)
 {
@@ -88,10 +90,25 @@ static int micro_read(int handle, uint16_t *word)
 
 static int enable_channel_set(int handle, const int *channels, int n_channels)
 {
-    uint16_t pattern;
-    uint16_t expected_low = 0;   /* only channels 0-15 -- see note below */
-    int has_high_channel = 0;    /* any requested channel >= 16 (V1290A only) */
+    uint16_t word0, word1 = 0;
+    uint32_t pattern, expected = 0;
+    int is_model_a;
     int i;
+
+    is_model_a = caen_v1290_is_model_a(handle);
+    if (is_model_a < 0) {
+        fprintf(stderr, "Failed to detect module model (Configuration ROM read)\n");
+        return -1;
+    }
+    if (!is_model_a) {
+        for (i = 0; i < n_channels; i++) {
+            if (channels[i] > 15) {
+                fprintf(stderr, "Channel %d is out of range for the detected V1290N (0-15)\n",
+                        channels[i]);
+                return -1;
+            }
+        }
+    }
 
     printf("Sending opcode DIS_ALL_CH (0x%04X)...\n", OPCODE_DIS_ALL_CH);
     if (micro_write(handle, OPCODE_DIS_ALL_CH) != 0) {
@@ -100,7 +117,7 @@ static int enable_channel_set(int handle, const int *channels, int n_channels)
     }
 
     for (i = 0; i < n_channels; i++) {
-        /* EN_CHANNEL (manual Sec.5.6, opcode 0x40nn) takes the channel index as a plain
+        /* EN_CHANNEL (manual Sec.5.6.1, opcode 0x40nn) takes the channel index as a plain
            byte operand and is documented identically for the 16- and 32-channel models,
            so this works unmodified for channels 0-31. */
         uint16_t opcode_en = (uint16_t)(OPCODE_EN_CHANNEL_BASE | (channels[i] & 0xFF));
@@ -110,41 +127,41 @@ static int enable_channel_set(int handle, const int *channels, int n_channels)
             fprintf(stderr, "Failed to send EN_CHANNEL for channel %d\n", channels[i]);
             return -1;
         }
-        if (channels[i] < 16)
-            expected_low |= (uint16_t)(1u << channels[i]);
-        else
-            has_high_channel = 1;
+        expected |= (1u << channels[i]);
     }
 
-    /* READ_EN_PATTERN (0x45xx) only ever returns a 16-bit pattern covering channels
-       0-15 (manual Sec.5.6) -- there is a documented READ_EN_PATTERN32 (0x47xx, 2
-       output words) for the full 32 channels, but its word order isn't specified in
-       the manual and we have no V1290A to verify it against, so rather than guess we
-       only cross-check channels 0-15 here and say so honestly for channels 16-31 --
-       their EN_CHANNEL write was still individually handshake-acked above, just not
-       re-verified via a pattern readback. */
+    /* READ_EN_PATTERN (0x45xx, manual Sec.5.6.6) answers with ONE 16-bit word on a
+       V1290N but TWO on a V1290A (channels 0-15, then 16-31) -- reading the wrong
+       number of words leaves the microcontroller waiting for the rest and
+       desyncs every command that follows, so the word count must follow the
+       detected model, not which channels were requested. */
     printf("Verification : sending READ_EN_PATTERN (0x%04X)...\n", OPCODE_READ_EN_PATTERN);
     if (micro_write(handle, OPCODE_READ_EN_PATTERN) != 0) {
         fprintf(stderr, "Failed to send READ_EN_PATTERN\n");
         return -1;
     }
-    if (micro_read(handle, &pattern) != 0) {
-        fprintf(stderr, "Failed to read activation pattern\n");
+    if (micro_read(handle, &word0) != 0) {
+        fprintf(stderr, "Failed to read activation pattern (word 0)\n");
         return -1;
     }
-
-    printf("  Activation pattern (channels 0-15) = 0x%04X\n", pattern);
-
-    if (pattern != expected_low) {
-        fprintf(stderr, "ATTENTION : unexpected pattern for channels 0-15 (expected 0x%04X, got 0x%04X)\n",
-                expected_low, pattern);
-        return -1;
+    if (is_model_a) {
+        if (micro_read(handle, &word1) != 0) {
+            fprintf(stderr, "Failed to read activation pattern (word 1, channels 16-31)\n");
+            return -1;
+        }
     }
 
-    if (has_high_channel) {
-        printf("  NOTE: channel(s) >= 16 were sent (EN_CHANNEL acked individually by the "
-               "microcontroller) but are NOT re-verified by this readback, which only covers "
-               "channels 0-15 -- confirm with decode_status / a scope if in doubt.\n");
+    pattern = (uint32_t)word0 | ((uint32_t)word1 << 16);
+    if (is_model_a)
+        printf("  Activation pattern (channels 0-31) = 0x%08X (word0=0x%04X, word1=0x%04X)\n",
+               pattern, word0, word1);
+    else
+        printf("  Activation pattern (channels 0-15) = 0x%04X\n", word0);
+
+    if (pattern != expected) {
+        fprintf(stderr, "ATTENTION : unexpected pattern (expected 0x%08X, got 0x%08X)\n",
+                expected, pattern);
+        return -1;
     }
 
     printf("  Active channels : ");
