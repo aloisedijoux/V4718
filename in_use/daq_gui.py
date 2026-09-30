@@ -6,7 +6,7 @@ Thin GUI wrapper around the existing command-line tools in this folder
 (module_reset, enable_channels*, config_trigger_matching,
 set_continuous_storage, enable_trigger_subtraction, clear_buffer,
 decode_status, read_channel_pattern, software_trigger,
-read_output_buffer_blt, live_histogram_multi.py). It does not talk to the
+read_output_buffer_blt, live_histogram_multi.py, live_sipm_matrix.py). It does not talk to the
 hardware directly -- it just runs those binaries with the arguments picked
 in the form and shows their output in a log panel, so anything documented
 in howTo.md / procedure.md still applies.
@@ -43,6 +43,7 @@ class DaqGui:
     MODULE_BOTH = "Both (V1290N + V1290A)"
     MAX_CHANNELS = {MODULE_N: 16, MODULE_A: 32}
 
+
     def __init__(self, root):
         self.root = root
         root.title("V1290N TDC DAQ - Control Panel")
@@ -55,7 +56,7 @@ class DaqGui:
         self.errlog_fh = None
         self.csv_fh = None
         self.acq_proc1 = None  # read_output_buffer_blt
-        self.acq_proc2 = None  # live_histogram_multi.py (optional)
+        self.acq_live_procs = []  # live_histogram_multi.py / live_sipm_matrix.py (0, 1, or both, run simultaneously)
 
         self._open_session_log()
         self._build_ui()
@@ -332,12 +333,28 @@ class DaqGui:
         self.save_binary_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Save raw binary (<run>.bin, replayable with decode_binary.py)",
                          variable=self.save_binary_var).grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        ttk.Label(f, text="Live view:").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        live_row = ttk.Frame(f)
+        live_row.grid(row=6, column=1, columnspan=2, sticky="w", padx=4, pady=(6, 0))
         self.live_hist_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="Live histogram display (live_histogram_multi.py)",
-                         variable=self.live_hist_var).grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(live_row, text="Histogram", variable=self.live_hist_var).pack(side=tk.LEFT)
+        self.live_matrix_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(live_row, text="SiPM matrix", variable=self.live_matrix_var,
+                         command=self._on_live_view_change).pack(side=tk.LEFT, padx=(12, 0))
+
+        self.sipm_row = ttk.Frame(f)
+        self.sipm_row.grid(row=7, column=0, columnspan=3, sticky="we", pady=(4, 0))
+        ttk.Label(self.sipm_row, text="C channels:").pack(side=tk.LEFT)
+        self.sipm_c_var = tk.StringVar(value="")
+        ttk.Entry(self.sipm_row, textvariable=self.sipm_c_var, width=14).pack(side=tk.LEFT, padx=(2, 10))
+        ttk.Label(self.sipm_row, text="D channels:").pack(side=tk.LEFT)
+        self.sipm_d_var = tk.StringVar(value="")
+        ttk.Entry(self.sipm_row, textvariable=self.sipm_d_var, width=14).pack(side=tk.LEFT, padx=(2, 0))
+        self._on_live_view_change()
 
         btns = ttk.Frame(f)
-        btns.grid(row=7, column=0, columnspan=3, sticky="we", pady=(8, 0))
+        btns.grid(row=8, column=0, columnspan=3, sticky="we", pady=(8, 0))
         self.start_btn = ttk.Button(btns, text="Start acquisition", command=self.on_start_acquisition)
         self.start_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.stop_btn = ttk.Button(btns, text="Stop acquisition", command=self.on_stop_acquisition, state="disabled")
@@ -346,9 +363,15 @@ class DaqGui:
 
         self.status_var = tk.StringVar(value="STOPPED")
         self.status_label = ttk.Label(f, textvariable=self.status_var, foreground="#a33")
-        self.status_label.grid(row=8, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.status_label.grid(row=9, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         f.columnconfigure(1, weight=1)
+
+    def _on_live_view_change(self):
+        if self.live_matrix_var.get():
+            self.sipm_row.grid()
+        else:
+            self.sipm_row.grid_remove()
 
     def _build_log(self, parent):
         f = ttk.LabelFrame(parent, text="Log", padding=8)
@@ -537,6 +560,28 @@ class DaqGui:
         offset = self.offset_var.get().strip() or "-2000"
         outdir = self.outdir_var.get().strip() or BASE_DIR
         run_name = self.runname_var.get().strip() or "run"
+        want_hist = self.live_hist_var.get()
+        want_matrix = self.live_matrix_var.get()
+
+        sipm_env = None
+        if want_matrix:
+            c_str, d_str = self.sipm_c_var.get().strip(), self.sipm_d_var.get().strip()
+            try:
+                c_chans = [int(c.strip()) for c in c_str.split(",") if c.strip()]
+                d_chans = [int(c.strip()) for c in d_str.split(",") if c.strip()]
+            except ValueError:
+                messagebox.showerror("Acquisition", "C/D channels must be comma-separated integers, e.g. 0,1,2,3.")
+                return
+            if not c_chans or not d_chans:
+                messagebox.showerror("Acquisition", "SiPM matrix live view needs both C channels and D channels filled in.")
+                return
+            overlap = set(c_chans) & set(d_chans)
+            if overlap:
+                self.log(f"NOTE: channel(s) {sorted(overlap)} listed in both C and D -- "
+                          f"their cell(s) in the matrix will show double-counted hits (C+D from the same channel).")
+            sipm_env = dict(os.environ)
+            sipm_env["SIPM_C_CHANNELS"] = ",".join(str(c) for c in c_chans)
+            sipm_env["SIPM_D_CHANNELS"] = ",".join(str(c) for c in d_chans)
 
         if self.module_type_var.get() == self.MODULE_BOTH:
             self.log("NOTE: 'Both' module model selected, but acquisition reads from a single "
@@ -573,7 +618,7 @@ class DaqGui:
             binfile = os.path.join(outdir, f"{run_name}.bin")
             args += ["-b", binfile]
 
-        use_live = self.live_hist_var.get()
+        use_live = want_hist or want_matrix
         self.csv_fh = None
         if not use_live:
             csv_path = os.path.join(outdir, f"{run_name}_stream.csv")
@@ -599,26 +644,75 @@ class DaqGui:
             return
         threading.Thread(target=self._stream_reader, args=(self.acq_proc1.stderr, "acq"), daemon=True).start()
 
-        self.acq_proc2 = None
+        self.acq_live_procs = []
         if use_live:
-            hist_script = bin_path("live_histogram_multi.py")
-            if not os.path.isfile(hist_script):
-                self.log("WARNING: live_histogram_multi.py not found, skipping live display.")
-            else:
+            wanted = []
+            if want_hist:
+                wanted.append(("live_histogram_multi.py", None, "hist"))
+            if want_matrix:
+                wanted.append(("live_sipm_matrix.py", sipm_env, "matrix"))
+
+            for script_name, env, tag in wanted:
+                live_script = bin_path(script_name)
+                if not os.path.isfile(live_script):
+                    self.log(f"WARNING: {script_name} not found, skipping live display.")
+                    continue
                 try:
-                    self.acq_proc2 = subprocess.Popen(
-                        [sys.executable, hist_script], cwd=BASE_DIR,
-                        stdin=self.acq_proc1.stdout, stdout=subprocess.DEVNULL,
+                    proc = subprocess.Popen(
+                        [sys.executable, live_script], cwd=BASE_DIR,
+                        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                         stderr=subprocess.PIPE, text=True, bufsize=1,
+                        env=env,
                     )
-                    self.acq_proc1.stdout.close()  # let proc1 see EOF/SIGPIPE if proc2 exits
-                    threading.Thread(target=self._stream_reader,
-                                      args=(self.acq_proc2.stderr, "hist"), daemon=True).start()
                 except Exception as e:
-                    self.log(f"WARNING: could not start live histogram: {e}")
+                    self.log(f"WARNING: could not start live view ({script_name}): {e}")
+                    continue
+                self.acq_live_procs.append(proc)
+                threading.Thread(target=self._stream_reader, args=(proc.stderr, tag), daemon=True).start()
+
+            if self.acq_live_procs:
+                # The GUI fans the single acquisition stream out to every live viewer's
+                # stdin itself (instead of handing proc1.stdout's fd to one child directly),
+                # so histogram + SiPM matrix (or any future live view) can run at once.
+                threading.Thread(target=self._relay_stream,
+                                  args=(self.acq_proc1.stdout, list(self.acq_live_procs)),
+                                  daemon=True).start()
+            else:
+                # No viewer actually started (e.g. missing scripts) -- still drain proc1's
+                # stdout so it doesn't block on a full pipe with nobody reading it.
+                threading.Thread(target=self._drain_stream, args=(self.acq_proc1.stdout,), daemon=True).start()
 
         self.log(f"[Acquisition] started (PID {self.acq_proc1.pid}).")
         self._set_acq_running(True)
+
+    def _relay_stream(self, src_stream, dest_procs):
+        """Read text lines from src_stream and fan them out to the stdin of every
+        process in dest_procs, so several live viewers can consume the same
+        acquisition stream at once. Drops a destination once its stdin breaks
+        (e.g. the viewer window was closed) instead of stopping the relay."""
+        try:
+            for line in src_stream:
+                for proc in list(dest_procs):
+                    try:
+                        proc.stdin.write(line)
+                        proc.stdin.flush()
+                    except (BrokenPipeError, ValueError, OSError):
+                        dest_procs.remove(proc)
+        except (ValueError, OSError):
+            pass
+        finally:
+            for proc in dest_procs:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+
+    def _drain_stream(self, stream):
+        try:
+            for _line in stream:
+                pass
+        except (ValueError, OSError):
+            pass
 
     def on_stop_acquisition(self):
         if self.acq_proc1 is None:
@@ -637,12 +731,12 @@ class DaqGui:
                     self.acq_proc1.kill()
                 except Exception:
                     pass
-            if self.acq_proc2 is not None:
+            for proc in self.acq_live_procs:
                 try:
-                    self.acq_proc2.wait(timeout=5)
+                    proc.wait(timeout=5)
                 except Exception:
                     try:
-                        self.acq_proc2.terminate()
+                        proc.terminate()
                     except Exception:
                         pass
             self.log("[Acquisition] stopped.")
@@ -667,7 +761,7 @@ class DaqGui:
 
     def _cleanup_acquisition(self):
         self.acq_proc1 = None
-        self.acq_proc2 = None
+        self.acq_live_procs = []
         self._close_acq_files()
         self._set_acq_running(False)
 
