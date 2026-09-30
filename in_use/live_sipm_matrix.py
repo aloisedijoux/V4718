@@ -138,41 +138,16 @@ thread.start()
 N_ROWS = len(ROW_GROUPS)
 N_COLS = len(COL_GROUPS)
 
-
-def _channel_label(ch):
-    """Etiquette lisible pour un channel : 'C5-L'/'D9-T' via le mapping fixe
-    (sipm_channel_map.CHANNEL_TO_BAR) si connu, sinon juste 'ch<N>' (mode
-    manuel / channel hors mapping)."""
-    entry = chmap.CHANNEL_TO_BAR.get(ch)
-    return f"{entry[1]}-{entry[2]}" if entry else f"ch{ch}"
-
-
-# Ordre d'affichage du panneau par-channel : toutes les barres C (dans l'ordre
-# des lignes de la matrice), puis toutes les barres D (ordre des colonnes),
-# sans doublon (un channel utilise a la fois en C et en D -- overlap manuel --
-# n'apparait qu'une fois, son taux est le meme quel que soit le contexte).
-_CHANNEL_ORDER = []
-_seen_ch = set()
-for _grp in ROW_GROUPS + COL_GROUPS:
-    for _ch in _grp:
-        if _ch not in _seen_ch:
-            _seen_ch.add(_ch)
-            _CHANNEL_ORDER.append(_ch)
-_CHANNEL_LABELS = [_channel_label(ch) for ch in _CHANNEL_ORDER]
-_CHANNEL_COLORS = ["#4c72b0" if ch in _row_channels else "#c44e52" for ch in _CHANNEL_ORDER]
-N_CHANNELS = len(_CHANNEL_ORDER)
-
-fig_w = max(8.0, 1.1 * N_COLS + 6.5)
-fig_h = max(4.0, 1.1 * N_ROWS + 2.0, 0.28 * N_CHANNELS + 1.5)
+fig_w = max(6.5, 1.1 * N_COLS + 4.5)
+fig_h = max(4.0, 1.1 * N_ROWS + 2.0)
 fig, (ax, ax2) = plt.subplots(1, 2, figsize=(fig_w, fig_h),
-                               gridspec_kw={"width_ratios": [max(N_COLS, 2), 2.2]})
+                               gridspec_kw={"width_ratios": [max(N_COLS, 2), 1.3]})
 
-# Build all artists (image, ticks, colorbar, per-cell text, per-channel bars) ONCE.
+# Build all artists (image, ticks, colorbar, per-cell text, plane totals) ONCE.
 # Animating by mutating them in place (im.set_data/set_clim, cbar.update_normal,
-# text.set_text, bar.set_width) instead of ax.clear() + re-creating everything
-# each frame -- repeatedly removing/recreating a colorbar's axes on a live figure
-# is fragile in matplotlib and eventually raises a KeyError from deep inside
-# figure.delaxes().
+# text.set_text) instead of ax.clear() + re-creating everything each frame --
+# repeatedly removing/recreating a colorbar's axes on a live figure is fragile
+# in matplotlib and eventually raises a KeyError from deep inside figure.delaxes().
 im = ax.imshow(np.zeros((N_ROWS, N_COLS)), cmap=CMAP, aspect="equal", origin="upper", vmin=0, vmax=1)
 ax.set_xticks(range(N_COLS))
 ax.set_xticklabels(COL_LABELS, rotation=45, ha="right")
@@ -184,16 +159,13 @@ cbar = fig.colorbar(im, ax=ax, label="Comptage (barre C + barre D) depuis la fra
 texts = [[ax.text(j, i, "0", ha="center", va="center", color="black", fontsize=9)
           for j in range(N_COLS)] for i in range(N_ROWS)]
 
-# Panneau de droite : taux instantane (hits/s) par channel individuel (une barre
-# horizontale par channel -- L/R ou T/B affiches separement, pas sommes comme
-# dans la matrice) -- bleu = channel cote C, rouge = channel cote D.
-bars = ax2.barh(range(N_CHANNELS), [0.0] * N_CHANNELS, color=_CHANNEL_COLORS)
-ax2.set_yticks(range(N_CHANNELS))
-ax2.set_yticklabels(_CHANNEL_LABELS, fontsize=7)
-ax2.invert_yaxis()
-ax2.set_xlabel("hits/s (instantane)")
-ax2.set_title("Taux par channel", fontsize=10)
-ax2.set_xlim(0, 1)
+# Panneau de droite : juste 2 chiffres, le taux instantane (hits/s) de tout le
+# plan C (toutes barres C confondues) et de tout le plan D.
+ax2.axis("off")
+text_c_plane = ax2.text(0.5, 0.72, "plan C\n0 hits/s", ha="center", va="center",
+                         fontsize=20, fontweight="bold", color="#4c72b0", transform=ax2.transAxes)
+text_d_plane = ax2.text(0.5, 0.28, "plan D\n0 hits/s", ha="center", va="center",
+                         fontsize=20, fontweight="bold", color="#c44e52", transform=ax2.transAxes)
 
 fig.tight_layout()
 
@@ -231,10 +203,10 @@ def update(_frame):
             texts[i][j].set_text(str(value))
             texts[i][j].set_color("white" if value > 0.5 * vmax else "black")
 
-    chan_rates = [delta[ch] / window_s for ch in _CHANNEL_ORDER]
-    for bar, rate in zip(bars, chan_rates):
-        bar.set_width(rate)
-    ax2.set_xlim(0, max(chan_rates, default=0) * 1.15 or 1)
+    rate_c_plane = sum(delta[ch] for ch in _row_channels) / window_s
+    rate_d_plane = sum(delta[ch] for ch in _col_channels) / window_s
+    text_c_plane.set_text(f"plan C\n{rate_c_plane:.1f} hits/s")
+    text_d_plane.set_text(f"plan D\n{rate_d_plane:.1f} hits/s")
 
     status = "stopped" if stdin_closed.is_set() else "live"
     ax.set_title(f"SiPM matrix ({status}) -- {elapsed_s:.1f}s ecoules -- "
