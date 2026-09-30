@@ -105,10 +105,12 @@ class DaqGui:
         outer = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        left = ttk.Frame(outer, padding=8)
+        left_container = ttk.Frame(outer)
         right = ttk.Frame(outer, padding=8)
-        outer.add(left, weight=0)
+        outer.add(left_container, weight=0)
         outer.add(right, weight=1)
+
+        left = self._build_scrollable_left(left_container)
 
         self._build_connection(left)
         self._build_config(left)
@@ -116,6 +118,51 @@ class DaqGui:
         self._build_acquisition(left)
         self._build_log(right)
         self._on_module_type_change()
+
+    def _build_scrollable_left(self, parent):
+        """Wrap the left control panel (connection/config/verify/acquisition, stacked
+        vertically) in a canvas + scrollbar so every section -- including the Start/Stop
+        acquisition buttons at the bottom -- stays reachable even when the window is
+        shorter than the panel's natural height."""
+        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0)
+        vscroll = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        inner = ttk.Frame(canvas, padding=8)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def sync_scrollregion(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.configure(width=inner.winfo_reqwidth())
+        inner.bind("<Configure>", sync_scrollregion)
+
+        def on_canvas_configure(event):
+            if event.width > inner.winfo_reqwidth():
+                canvas.itemconfigure(inner_id, width=event.width)
+        canvas.bind("<Configure>", on_canvas_configure)
+
+        def on_mousewheel(event):
+            if event.num == 5 or event.delta < 0:
+                canvas.yview_scroll(1, "units")
+            elif event.num == 4 or event.delta > 0:
+                canvas.yview_scroll(-1, "units")
+
+        def bind_mousewheel(_event):
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+            canvas.bind_all("<Button-4>", on_mousewheel)
+            canvas.bind_all("<Button-5>", on_mousewheel)
+
+        def unbind_mousewheel(_event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", bind_mousewheel)
+        canvas.bind("<Leave>", unbind_mousewheel)
+
+        return inner
 
     def _build_connection(self, parent):
         f = ttk.LabelFrame(parent, text="Connection", padding=8)
