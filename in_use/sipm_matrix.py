@@ -39,6 +39,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import sipm_channel_map as chmap
+from channel_list import parse_channel_list as _parse_channel_ranges
 
 TYPE_TDC_MEASUREMENT = 0x00
 
@@ -57,10 +58,12 @@ def load_channel_counts(bin_path):
 
 
 def parse_channel_list(s, label):
+    """Accepte les valeurs individuelles et les plages "LOW-HIGH", melangees :
+    '0,1,2' ou '0-2' ou '0-3,8,10-12' -- voir channel_list.py."""
     try:
-        chans = [int(c.strip()) for c in s.split(",") if c.strip() != ""]
-    except ValueError:
-        sys.exit(f"ERREUR : --{label} doit etre une liste de channels separes par des virgules, ex: 0,1,2,3")
+        chans = _parse_channel_ranges(s)
+    except ValueError as e:
+        sys.exit(f"ERREUR : --{label} invalide ({e}), ex: 0,1,2,3 ou 0-3,8,10-12")
     if not chans:
         sys.exit(f"ERREUR : --{label} est vide.")
     return chans
@@ -102,9 +105,11 @@ def main():
     ap.add_argument("--c-bars", default=None, help="sous-ensemble de barres C, ex: C5,C6,C7 (defaut: toutes)")
     ap.add_argument("--d-bars", default=None, help="sous-ensemble de barres D, ex: D4,D5 (defaut: toutes)")
     ap.add_argument("--c-channels", default=None, dest="c_channels",
-                     help="mode manuel : channels TDC bruts pour les lignes (ignore le mapping C5-C13)")
+                     help="mode manuel : channels TDC bruts pour les lignes, ex: 0,1,2 ou 0-3,8,10-12 "
+                          "(ignore le mapping C5-C13)")
     ap.add_argument("--d-channels", default=None, dest="d_channels",
-                     help="mode manuel : channels TDC bruts pour les colonnes (ignore le mapping D4-D10)")
+                     help="mode manuel : channels TDC bruts pour les colonnes, ex: 8,9,10 ou 8-11 "
+                          "(ignore le mapping D4-D10)")
     ap.add_argument("--duration-s", type=float, required=True,
                      help="duree reelle de l'acquisition en secondes (pour le taux de comptage)")
     ap.add_argument("--save", default=None, help="enregistre la figure dans ce fichier au lieu de l'afficher")

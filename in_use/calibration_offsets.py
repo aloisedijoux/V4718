@@ -52,6 +52,8 @@ from datetime import datetime, timezone
 import numpy as np
 import matplotlib.pyplot as plt
 
+from channel_list import parse_channel_list as _parse_channel_ranges
+
 ASSUMED_RESOLUTION_PS = 25
 TYPE_TDC_MEASUREMENT = 0x00
 
@@ -112,10 +114,12 @@ def find_peak(delay_ns, bins, search_range, smooth_bins):
 
 
 def parse_channel_list(s):
+    """Accepte les valeurs individuelles et les plages "LOW-HIGH", melangees :
+    '0,1,2' ou '0-3,8,10-12' -- voir channel_list.py."""
     try:
-        return [int(c.strip()) for c in s.split(",") if c.strip() != ""]
-    except ValueError:
-        sys.exit("ERREUR : liste de channels invalide, attendu ex: 0,1,2,3")
+        return _parse_channel_ranges(s)
+    except ValueError as e:
+        sys.exit(f"ERREUR : liste de channels invalide ({e}), attendu ex: 0,1,2,3 ou 0-3,8,10-12")
 
 
 def parse_manual_offsets(items):
@@ -273,7 +277,7 @@ def main():
     p_measure = sub.add_parser("measure", help="mesure les offsets d'un run et met a jour le fichier de calibration")
     p_measure.add_argument("input", help="fichier .bin (brut) ou .csv (trigger,channel,delai_ns)")
     p_measure.add_argument("--momentum", required=True, help="label du momentum de ce run (ex: 1500, 1500MeV)")
-    p_measure.add_argument("--channels", required=True, help="channels a calibrer, ex: 0,1,2,3")
+    p_measure.add_argument("--channels", required=True, help="channels a calibrer, ex: 0,1,2,3 ou 0-3,8,10-12")
     p_measure.add_argument("--calib-file", default="calibration.json", help="fichier de calibration JSON (cree si absent)")
     p_measure.add_argument("--plot-dir", default=None, help="dossier de sortie des histogrammes (defaut: a cote du fichier de calibration)")
     p_measure.add_argument("--bins", type=int, default=200)
@@ -291,7 +295,8 @@ def main():
     p_apply.add_argument("input", help="fichier .bin (brut) ou .csv (trigger,channel,delai_ns)")
     p_apply.add_argument("--momentum", required=True, help="label du momentum a utiliser dans le fichier de calibration")
     p_apply.add_argument("--calib-file", default="calibration.json")
-    p_apply.add_argument("--channels", default=None, help="sous-ensemble de channels (defaut: tous ceux calibres pour ce momentum)")
+    p_apply.add_argument("--channels", default=None,
+                          help="sous-ensemble de channels, ex: 0,1,2 ou 0-3,8 (defaut: tous ceux calibres pour ce momentum)")
     p_apply.add_argument("--bins", type=int, default=200)
     p_apply.add_argument("--range-ns", type=float, nargs=2, metavar=("MIN", "MAX"), default=None)
     p_apply.add_argument("--out", default=None, help="fichier image de sortie")

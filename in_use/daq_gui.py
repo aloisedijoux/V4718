@@ -35,6 +35,7 @@ LOG_DIR = os.path.join(BASE_DIR, "gui_logs")
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 import sipm_channel_map
+import channel_list
 
 
 def bin_path(name):
@@ -268,7 +269,7 @@ class DaqGui:
         else:
             blank_hint = "blank = all (16 on the N, 32 on the A)"
         if hasattr(self, "channels_label_var"):
-            self.channels_label_var.set(f"Channels (comma-sep, {blank_hint}):")
+            self.channels_label_var.set(f"Channels (comma-sep, ranges ok e.g. 0-5,16, {blank_hint}):")
         self.channels_hint_var.set(
             f"Selected model: {mtype}"
             + (" -- channel numbers are validated per module." if mtype == self.MODULE_BOTH else "")
@@ -464,15 +465,20 @@ class DaqGui:
     def on_apply_config(self):
         pid = self.pid_var.get().strip()
         channels = self.channels_var.get().strip()
-        requested_chans = [c.strip() for c in channels.split(",") if c.strip()]
+        try:
+            requested_chans = channel_list.parse_channel_list(channels) if channels else []
+        except ValueError as e:
+            messagebox.showerror("Apply configuration",
+                                  f"Invalid channel list ({e}). Examples: 0,1,2,3 or 0-5,16.")
+            return
 
         cmds = []
         for label, base, max_ch in self._targets():
             if requested_chans:
-                in_range = [c for c in requested_chans if c.isdigit() and int(c) < max_ch]
-                skipped = [c for c in requested_chans if c not in in_range]
+                in_range = [str(c) for c in requested_chans if 0 <= c < max_ch]
+                skipped = [c for c in requested_chans if not (0 <= c < max_ch)]
                 if skipped:
-                    self.log(f"NOTE [{label}]: skipping channel(s) {', '.join(skipped)} "
+                    self.log(f"NOTE [{label}]: skipping channel(s) {', '.join(str(c) for c in skipped)} "
                               f"(out of range 0-{max_ch - 1} for this module).")
                 if in_range:
                     cmds.append([bin_path("enable_channels_set"), pid, base] + in_range)

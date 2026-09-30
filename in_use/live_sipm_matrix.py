@@ -7,8 +7,8 @@ Carte de couverture faisceau EN DIRECT sur une grille de barres SiPM
 delai_ns" produit par read_output_buffer_blt en mode stream (-s). Se
 branche comme live_histogram_multi.py (meme flux d'entree), mais affiche
 une matrice C x D au lieu d'un histogramme, avec en plus un panneau lateral
-montrant le taux instantane (hits/s) de chaque channel individuel (L/R ou
-T/B separement, pas somme par barre comme dans la matrice).
+montrant le taux instantane global (hits/s) du plan C (toutes les barres C
+confondues) et du plan D (toutes les barres D confondues).
 
 Chaque case affiche un DIFFERENTIEL, pas un cumul : le nombre de coups
 recus sur la barre C (L+R) et sur la barre D (T+B) depuis le rafraichissement
@@ -36,8 +36,9 @@ Usage :
 Variables d'environnement :
   SIPM_C_BARS       sous-ensemble de barres C, ex: C5,C6,C7 (defaut: toutes, C5-C13)
   SIPM_D_BARS       sous-ensemble de barres D, ex: D4,D5 (defaut: toutes, D4-D10)
-  SIPM_C_CHANNELS   mode manuel : channels TDC bruts pour les lignes (ignore le mapping)
-  SIPM_D_CHANNELS   mode manuel : channels TDC bruts pour les colonnes (ignore le mapping)
+  SIPM_C_CHANNELS   mode manuel : channels TDC bruts pour les lignes, ex: 0,1,2 ou
+                    0-3,8,10-12 (plages acceptees, ignore le mapping)
+  SIPM_D_CHANNELS   mode manuel : channels TDC bruts pour les colonnes, meme syntaxe
   SIPM_INTERVAL_MS  periode de rafraichissement en ms (defaut 500)
   SIPM_CMAP         colormap matplotlib (defaut Blues)
 """
@@ -52,6 +53,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 import sipm_channel_map as chmap
+from channel_list import parse_channel_list as _parse_channel_ranges
 
 
 def _parse_list(env_name):
@@ -63,17 +65,18 @@ def _build_axes():
     """Retourne (row_labels, row_channel_groups, col_labels, col_channel_groups),
     en respectant SIPM_C_CHANNELS/SIPM_D_CHANNELS (mode manuel, prioritaire) ou
     SIPM_C_BARS/SIPM_D_BARS (sous-ensemble du mapping fixe), sinon le mapping
-    fixe complet."""
-    c_chan_raw = _parse_list("SIPM_C_CHANNELS")
-    d_chan_raw = _parse_list("SIPM_D_CHANNELS")
-    if c_chan_raw or d_chan_raw:
-        if not (c_chan_raw and d_chan_raw):
+    fixe complet. SIPM_C_CHANNELS/SIPM_D_CHANNELS acceptent des plages ('1-5,16'),
+    voir channel_list.py."""
+    c_chan_str = os.environ.get("SIPM_C_CHANNELS", "").strip()
+    d_chan_str = os.environ.get("SIPM_D_CHANNELS", "").strip()
+    if c_chan_str or d_chan_str:
+        if not (c_chan_str and d_chan_str):
             sys.exit("ERREUR : SIPM_C_CHANNELS et SIPM_D_CHANNELS doivent etre donnes ensemble.")
         try:
-            c_channels = [int(c) for c in c_chan_raw]
-            d_channels = [int(c) for c in d_chan_raw]
-        except ValueError:
-            sys.exit("ERREUR : SIPM_C_CHANNELS/SIPM_D_CHANNELS doivent etre des entiers separes par des virgules.")
+            c_channels = _parse_channel_ranges(c_chan_str)
+            d_channels = _parse_channel_ranges(d_chan_str)
+        except ValueError as e:
+            sys.exit(f"ERREUR : SIPM_C_CHANNELS/SIPM_D_CHANNELS invalide ({e}), ex: 0,1,2 ou 0-3,8,10-12")
         row_labels = [f"C ch{c}" for c in c_channels]
         col_labels = [f"D ch{d}" for d in d_channels]
         return row_labels, [[c] for c in c_channels], col_labels, [[d] for d in d_channels]
