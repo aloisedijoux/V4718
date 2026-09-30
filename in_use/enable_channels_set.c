@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <CAENComm.h>
+#include "caen_open.h"
 
 #define REG_MICRO            0x102E
 #define REG_MICRO_HANDSHAKE  0x1030
@@ -132,19 +133,19 @@ static int enable_channel_set(int handle, const int *channels, int n_channels)
 
 int main(int argc, char *argv[])
 {
-    uint32_t usb_link, vme_base;
+    uint32_t vme_base;
     int channels[MAX_CHANNELS];
     int n_channels = 0;
     CAENComm_ErrorCode err;
     int handle, rc, i;
 
     if (argc < 4) {
-        fprintf(stderr, "Usage: %s <PID_V4718> <base_address_hex> <ch1> [ch2] [ch3] ...\n", argv[0]);
-        fprintf(stderr, "Example : %s 64324 0x03000000 13 4\n", argv[0]);
+        fprintf(stderr, "Usage: %s <PID_or_IP_V4718> <base_address_hex> <ch1> [ch2] [ch3] ...\n", argv[0]);
+        fprintf(stderr, "Example (USB) : %s 64324 0x03000000 13 4\n", argv[0]);
+        fprintf(stderr, "Example (ETH) : %s 192.168.1.254 0x03000000 13 4\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    usb_link = (uint32_t)strtoul(argv[1], NULL, 10);
     vme_base = (uint32_t)strtoul(argv[2], NULL, 16);
 
     for (i = 3; i < argc && n_channels < MAX_CHANNELS; i++) {
@@ -162,12 +163,12 @@ int main(int argc, char *argv[])
     }
 
     printf("=== Activation of a set of channels ===\n");
-    printf("V4718 PID=%u\n", usb_link);
+    printf("V4718 PID/IP=%s\n", argv[1]);
     printf("--------------------------------------------------\n");
     printf("Module at address 0x%08X, %d target channel(s)\n", vme_base, n_channels);
     printf("--------------------------------------------------\n");
 
-    err = CAENComm_OpenDevice2(CAENComm_USB_V4718, &usb_link, 0, vme_base, &handle);
+    err = caen_open_v4718(argv[1], vme_base, &handle);
     if (err != CAENComm_Success) {
         fprintf(stderr, "Failed to open device: code %d\n", err);
         return EXIT_FAILURE;

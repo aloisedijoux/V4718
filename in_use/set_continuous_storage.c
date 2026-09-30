@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <CAENComm.h>
+#include "caen_open.h"
 
 #define REG_MICRO 0x102E
 #define REG_MICRO_HANDSHAKE 0x1030
@@ -51,7 +52,6 @@ static int micro_read(int handle, uint16_t *word)
 
 int main(int argc, char *argv[])
 {
-    uint32_t usb_link;
     uint32_t vme_base;
     CAENComm_ErrorCode err;
     int handle;
@@ -59,10 +59,9 @@ int main(int argc, char *argv[])
 
     if (argc != 3) return EXIT_FAILURE;
 
-    usb_link = (uint32_t)strtoul(argv[1], NULL, 10);
     vme_base = (uint32_t)strtoul(argv[2], NULL, 16);
 
-    err = CAENComm_OpenDevice2(CAENComm_USB_V4718, &usb_link, 0, vme_base, &handle);
+    err = caen_open_v4718(argv[1], vme_base, &handle);
     if (err != CAENComm_Success) return EXIT_FAILURE;
 
     if (micro_write(handle, OPCODE_CONT_STOR) != 0) return EXIT_FAILURE;

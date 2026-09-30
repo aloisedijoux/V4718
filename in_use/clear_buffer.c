@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <CAENComm.h>
+#include "caen_open.h"
 
 #define REG_SOFTWARE_CLEAR  0x1016
 #define REG_STATUS          0x1002
@@ -41,7 +42,7 @@
 #define STATUS_DATA_READY_BIT (1 << 0)
 #define STATUS_FULL_BIT        (1 << 2)
 
-static int process_module(uint32_t usb_link, uint32_t vme_base)
+static int process_module(const char *conn_arg, uint32_t vme_base)
 {
     CAENComm_ErrorCode err;
     int handle;
@@ -53,7 +54,7 @@ static int process_module(uint32_t usb_link, uint32_t vme_base)
     printf("Module a l'adresse 0x%08X\n", vme_base);
     printf("--------------------------------------------------\n");
 
-    err = CAENComm_OpenDevice2(CAENComm_USB_V4718, &usb_link, 0, vme_base, &handle);
+    err = caen_open_v4718(conn_arg, vme_base, &handle);
     if (err != CAENComm_Success) {
         fprintf(stderr, "Echec ouverture : code %d\n", err);
         return -1;
@@ -108,30 +109,27 @@ static int process_module(uint32_t usb_link, uint32_t vme_base)
 
 int main(int argc, char *argv[])
 {
-    uint32_t usb_link;
     int overall_rc = 0;
 
     static const uint32_t default_bases[] = { 0x08000000, 0x03000000 };
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <PID_V4718> [base_address_hex]\n", argv[0]);
-        fprintf(stderr, "Exemple (2 TDC par defaut) : %s 64324\n", argv[0]);
-        fprintf(stderr, "Exemple (1 TDC cible)       : %s 64324 0x03000000\n", argv[0]);
+        fprintf(stderr, "Usage: %s <PID_or_IP_V4718> [base_address_hex]\n", argv[0]);
+        fprintf(stderr, "Exemple (2 TDC par defaut, USB) : %s 64324\n", argv[0]);
+        fprintf(stderr, "Exemple (1 TDC cible, ETH)       : %s 192.168.1.254 0x03000000\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    usb_link = (uint32_t)strtoul(argv[1], NULL, 10);
-
     printf("=== Software Clear de l'Output Buffer ===\n");
-    printf("V4718 PID=%u\n\n", usb_link);
+    printf("V4718 PID/IP=%s\n\n", argv[1]);
 
     if (argc >= 3) {
         uint32_t vme_base = (uint32_t)strtoul(argv[2], NULL, 16);
-        overall_rc = process_module(usb_link, vme_base);
+        overall_rc = process_module(argv[1], vme_base);
     } else {
         int i;
         for (i = 0; i < 2; i++) {
-            int rc = process_module(usb_link, default_bases[i]);
+            int rc = process_module(argv[1], default_bases[i]);
             if (rc != 0)
                 overall_rc = rc;
         }

@@ -90,6 +90,7 @@
 #include <time.h>
 
 #include "v1290_decode.h"
+#include "caen_open.h"
 
 #define REG_CONTROL         0x1000
 #define REG_STATUS          0x1002
@@ -328,7 +329,7 @@ static int run_continuous(int handle, int blt_words, int verbose)
 
 int main(int argc, char *argv[])
 {
-    uint32_t usb_link, vme_base;
+    uint32_t vme_base;
     int blt_words = DEFAULT_BLT_WORDS;
     int continuous_mode = 0;
     int verbose = 0;
@@ -363,15 +364,15 @@ int main(int argc, char *argv[])
     }
 
     if (n_positional < 2) {
-        fprintf(stderr, "Usage: %s <PID_V4718> <base_address_hex> [blt_words] [-c] [-v] [-s offset_ns] [-b fichier]\n", argv[0]);
-        fprintf(stderr, "Exemple (1 passe)        : %s 64324 0x03000000\n", argv[0]);
+        fprintf(stderr, "Usage: %s <PID_or_IP_V4718> <base_address_hex> [blt_words] [-c] [-v] [-s offset_ns] [-b fichier]\n", argv[0]);
+        fprintf(stderr, "Exemple (1 passe, USB)   : %s 64324 0x03000000\n", argv[0]);
+        fprintf(stderr, "Exemple (1 passe, ETH)   : %s 192.168.1.254 0x03000000\n", argv[0]);
         fprintf(stderr, "Exemple (continu, stats) : %s 64324 0x03000000 8192 -c\n", argv[0]);
         fprintf(stderr, "Exemple (stream -> plot) : %s 64324 0x03000000 4096 -c -s -1000 | python3 live_histogram.py\n", argv[0]);
         fprintf(stderr, "Exemple (+ binaire)      : %s 64324 0x03000000 4096 -c -s -1000 -b run.bin | python3 live_histogram.py\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    usb_link = (uint32_t)strtoul(positional[0], NULL, 10);
     vme_base = (uint32_t)strtoul(positional[1], NULL, 16);
     if (n_positional >= 3)
         blt_words = atoi(positional[2]);
@@ -382,8 +383,8 @@ int main(int argc, char *argv[])
     }
 
     fprintf(info_stream(), "=== Lecture BLT32 de l'Output Buffer ===\n");
-    fprintf(info_stream(), "V4718 PID=%u, module 0x%08X, blocs de %d mots\n\n",
-           usb_link, vme_base, blt_words);
+    fprintf(info_stream(), "V4718 PID/IP=%s, module 0x%08X, blocs de %d mots\n\n",
+           positional[0], vme_base, blt_words);
     if (g_stream_mode)
         fprintf(info_stream(), "Mode stream actif (offset=%.3f ns) -- stdout = delais purs.\n\n",
                g_stream_offset_ns);
@@ -398,7 +399,7 @@ int main(int argc, char *argv[])
                binary_path);
     }
 
-    err = CAENComm_OpenDevice2(CAENComm_USB_V4718, &usb_link, 0, vme_base, &handle);
+    err = caen_open_v4718(positional[0], vme_base, &handle);
     if (err != CAENComm_Success) {
         fprintf(stderr, "Echec ouverture : code %d\n", err);
         if (g_binary_file)
