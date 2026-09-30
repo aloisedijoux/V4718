@@ -6,10 +6,14 @@ Carte de couverture faisceau EN DIRECT sur une grille de barres SiPM
 (voir toodo.txt, Todo1), a partir du flux CSV "numero_trigger,channel,
 delai_ns" produit par read_output_buffer_blt en mode stream (-s). Se
 branche comme live_histogram_multi.py (meme flux d'entree), mais affiche
-une matrice C x D (comptage cumule par channel depuis le debut de
-l'acquisition) au lieu d'un histogramme, avec le taux de comptage global
-mis a jour en direct -- pense pour les acquisitions courtes de 2-3s
-decrites dans le Todo1.
+une matrice C x D au lieu d'un histogramme.
+
+Chaque case affiche un DIFFERENTIEL, pas un cumul : le nombre de coups
+recus sur la barre C (L+R) et sur la barre D (T+B) depuis le rafraichissement
+PRECEDENT (une fenetre d'integration = l'intervalle entre deux frames,
+SIPM_INTERVAL_MS). Comme ca, la carte montre l'activite ACTUELLE (ou est le
+faisceau maintenant), pas une somme qui grossit indefiniment depuis le debut
+de l'acquisition et finit par etre dominee par l'historique.
 
 Par defaut, utilise le mapping FIXE channel V1290A -> barre defini dans
 sipm_channel_map.py (cablage MCFD modules #6 et #7) : 9 barres C (C5-C13,
@@ -145,23 +149,33 @@ ax.set_yticks(range(N_ROWS))
 ax.set_yticklabels(ROW_LABELS)
 ax.set_xlabel("Barres D")
 ax.set_ylabel("Barres C")
-cbar = fig.colorbar(im, ax=ax, label="Comptage (barre C + barre D)")
+cbar = fig.colorbar(im, ax=ax, label="Comptage (barre C + barre D) depuis la frame precedente")
 texts = [[ax.text(j, i, "0", ha="center", va="center", color="black", fontsize=9)
           for j in range(N_COLS)] for i in range(N_ROWS)]
 fig.tight_layout()
 
+_prev_counts = dict(counts_by_channel)
+_prev_time = t_start
+
 
 def update(_frame):
+    global _prev_counts, _prev_time
     with lock:
         counts = dict(counts_by_channel)
-    elapsed_s = max(time.monotonic() - t_start, 1e-6)
+    now = time.monotonic()
+    elapsed_s = max(now - t_start, 1e-6)
+    window_s = max(now - _prev_time, 1e-6)  # real time since the last frame (integration window)
 
-    row_totals = [sum(counts[ch] for ch in grp) for grp in ROW_GROUPS]
-    col_totals = [sum(counts[ch] for ch in grp) for grp in COL_GROUPS]
+    delta = {ch: counts[ch] - _prev_counts.get(ch, 0) for ch in counts}
+    _prev_counts, _prev_time = counts, now
+
+    row_totals = [sum(delta[ch] for ch in grp) for grp in ROW_GROUPS]
+    col_totals = [sum(delta[ch] for ch in grp) for grp in COL_GROUPS]
     matrix = np.array([[r + c for c in col_totals] for r in row_totals], dtype=np.int64)
 
-    total_hits = sum(counts.values())
-    rate_hz = total_hits / elapsed_s
+    total_hits = sum(counts.values())      # cumulatif, pour info seulement
+    window_hits = sum(delta.values())      # coups dans cette fenetre -> ce que montre la matrice
+    rate_hz = window_hits / window_s
     vmax = max(int(matrix.max()), 1)
 
     im.set_data(matrix)
@@ -175,8 +189,9 @@ def update(_frame):
             texts[i][j].set_color("white" if value > 0.5 * vmax else "black")
 
     status = "stopped" if stdin_closed.is_set() else "live"
-    ax.set_title(f"SiPM matrix ({status}) -- {elapsed_s:.1f}s -- "
-                 f"total={total_hits} -- {rate_hz:.1f} hits/s", fontsize=10)
+    ax.set_title(f"SiPM matrix ({status}) -- {elapsed_s:.1f}s ecoules -- "
+                 f"fenetre={window_s * 1000:.0f}ms -- {rate_hz:.1f} hits/s -- "
+                 f"cumul total={total_hits}", fontsize=10)
 
 
 ani = FuncAnimation(fig, update, interval=INTERVAL_MS, cache_frame_data=False)
