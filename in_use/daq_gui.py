@@ -32,6 +32,10 @@ from tkinter import ttk, filedialog, messagebox
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, "gui_logs")
 
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+import sipm_channel_map
+
 
 def bin_path(name):
     return os.path.join(BASE_DIR, name)
@@ -345,16 +349,20 @@ class DaqGui:
 
         self.sipm_row = ttk.Frame(f)
         self.sipm_row.grid(row=7, column=0, columnspan=3, sticky="we", pady=(4, 0))
-        ttk.Label(self.sipm_row, text="C channels:").pack(side=tk.LEFT)
+        ttk.Label(self.sipm_row, text="C bars (blank=all C5-C13):").pack(side=tk.LEFT)
         self.sipm_c_var = tk.StringVar(value="")
         ttk.Entry(self.sipm_row, textvariable=self.sipm_c_var, width=14).pack(side=tk.LEFT, padx=(2, 10))
-        ttk.Label(self.sipm_row, text="D channels:").pack(side=tk.LEFT)
+        ttk.Label(self.sipm_row, text="D bars (blank=all D4-D10):").pack(side=tk.LEFT)
         self.sipm_d_var = tk.StringVar(value="")
         ttk.Entry(self.sipm_row, textvariable=self.sipm_d_var, width=14).pack(side=tk.LEFT, padx=(2, 0))
+
+        self.sipm_hint = ttk.Label(f, text="(fixed module #6/#7 cabling -- each bar sums both ends; see sipm_channel_map.py)",
+                                    font=("TkDefaultFont", 8))
+        self.sipm_hint.grid(row=8, column=0, columnspan=3, sticky="w")
         self._on_live_view_change()
 
         btns = ttk.Frame(f)
-        btns.grid(row=8, column=0, columnspan=3, sticky="we", pady=(8, 0))
+        btns.grid(row=9, column=0, columnspan=3, sticky="we", pady=(8, 0))
         self.start_btn = ttk.Button(btns, text="Start acquisition", command=self.on_start_acquisition)
         self.start_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.stop_btn = ttk.Button(btns, text="Stop acquisition", command=self.on_stop_acquisition, state="disabled")
@@ -363,15 +371,17 @@ class DaqGui:
 
         self.status_var = tk.StringVar(value="STOPPED")
         self.status_label = ttk.Label(f, textvariable=self.status_var, foreground="#a33")
-        self.status_label.grid(row=9, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.status_label.grid(row=10, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         f.columnconfigure(1, weight=1)
 
     def _on_live_view_change(self):
         if self.live_matrix_var.get():
             self.sipm_row.grid()
+            self.sipm_hint.grid()
         else:
             self.sipm_row.grid_remove()
+            self.sipm_hint.grid_remove()
 
     def _build_log(self, parent):
         f = ttk.LabelFrame(parent, text="Log", padding=8)
@@ -565,23 +575,20 @@ class DaqGui:
 
         sipm_env = None
         if want_matrix:
-            c_str, d_str = self.sipm_c_var.get().strip(), self.sipm_d_var.get().strip()
-            try:
-                c_chans = [int(c.strip()) for c in c_str.split(",") if c.strip()]
-                d_chans = [int(c.strip()) for c in d_str.split(",") if c.strip()]
-            except ValueError:
-                messagebox.showerror("Acquisition", "C/D channels must be comma-separated integers, e.g. 0,1,2,3.")
+            c_bars = [b.strip().upper() for b in self.sipm_c_var.get().split(",") if b.strip()]
+            d_bars = [b.strip().upper() for b in self.sipm_d_var.get().split(",") if b.strip()]
+            unknown = [b for b in c_bars if b not in sipm_channel_map.C_BAR_ORDER] + \
+                      [b for b in d_bars if b not in sipm_channel_map.D_BAR_ORDER]
+            if unknown:
+                messagebox.showerror("Acquisition",
+                                      f"Unknown bar(s) {unknown}. C bars: {sipm_channel_map.C_BAR_ORDER}, "
+                                      f"D bars: {sipm_channel_map.D_BAR_ORDER}.")
                 return
-            if not c_chans or not d_chans:
-                messagebox.showerror("Acquisition", "SiPM matrix live view needs both C channels and D channels filled in.")
-                return
-            overlap = set(c_chans) & set(d_chans)
-            if overlap:
-                self.log(f"NOTE: channel(s) {sorted(overlap)} listed in both C and D -- "
-                          f"their cell(s) in the matrix will show double-counted hits (C+D from the same channel).")
             sipm_env = dict(os.environ)
-            sipm_env["SIPM_C_CHANNELS"] = ",".join(str(c) for c in c_chans)
-            sipm_env["SIPM_D_CHANNELS"] = ",".join(str(c) for c in d_chans)
+            if c_bars:
+                sipm_env["SIPM_C_BARS"] = ",".join(c_bars)
+            if d_bars:
+                sipm_env["SIPM_D_BARS"] = ",".join(d_bars)
 
         if self.module_type_var.get() == self.MODULE_BOTH:
             self.log("NOTE: 'Both' module model selected, but acquisition reads from a single "
