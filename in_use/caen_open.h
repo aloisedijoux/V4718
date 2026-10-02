@@ -66,16 +66,20 @@ static inline CAENComm_ErrorCode caen_open_v4718(const char *conn_arg,
  * seen when driving a V1290A with tools written only against the word
  * counts documented for the N.
  *
- * Returns 1 for a V1290A, 0 for a V1290N, -1 if the ROM register could
- * not be read (caller should treat that as a hard error rather than
- * guess, since guessing wrong here is exactly what causes the lockup).
+ * Returns 1 for a V1290A, 0 for a V1290N, or the (always negative) real
+ * CAENComm_ErrorCode if the ROM register could not be read -- callers
+ * should treat any negative return as a hard error rather than guess,
+ * since guessing wrong here is exactly what causes the lockup, and
+ * should print the value itself (e.g. "%d") so a -1 (VMEBusError, the
+ * module not responding on the bus at all) isn't confused with, say, a
+ * -7 (CommTimeout) or -8 (DeviceNotFound) -- very different problems.
  */
 static inline int caen_v1290_is_model_a(int handle)
 {
     uint16_t vers;
     CAENComm_ErrorCode err = CAENComm_Read16(handle, 0x4030, &vers);
     if (err != CAENComm_Success)
-        return -1;
+        return (int)err;
     return (vers == 0x00) ? 1 : 0;
 }
 
