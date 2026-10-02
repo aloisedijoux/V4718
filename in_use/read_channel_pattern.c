@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
 
     is_model_a = caen_v1290_is_model_a(handle);
     if (is_model_a < 0) {
-        fprintf(stderr, "Echec detection du modele (lecture Configuration ROM)\n");
+        fprintf(stderr, "Echec detection du modele (lecture Configuration ROM) : code %d\n", is_model_a);
         rc = -1;
         goto done;
     }

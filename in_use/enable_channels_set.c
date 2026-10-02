@@ -97,7 +97,7 @@ static int enable_channel_set(int handle, const int *channels, int n_channels)
 
     is_model_a = caen_v1290_is_model_a(handle);
     if (is_model_a < 0) {
-        fprintf(stderr, "Failed to detect module model (Configuration ROM read)\n");
+        fprintf(stderr, "Failed to detect module model (Configuration ROM read): code %d\n", is_model_a);
         return -1;
     }
     if (!is_model_a) {

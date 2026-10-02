@@ -122,7 +122,7 @@ static int enable_single_channel(int handle, int channel)
 
     is_model_a = caen_v1290_is_model_a(handle);
     if (is_model_a < 0) {
-        fprintf(stderr, "Echec detection du modele (lecture Configuration ROM)\n");
+        fprintf(stderr, "Echec detection du modele (lecture Configuration ROM) : code %d\n", is_model_a);
         return -1;
     }
     if (!is_model_a && channel > 15) {
