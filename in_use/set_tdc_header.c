@@ -1,5 +1,13 @@
 /*
  * set_tdc_header.c
+ *
+ * CONFIRME SUR LE MATERIEL (05/10/2026) : "off" casse l'acquisition sur ce
+ * module -- plus aucun mot ecrit dans l'Output Buffer du tout (pas juste
+ * les triggers sans hit), meme apres plusieurs secondes d'acquisition
+ * continue. Ne PAS utiliser "off" pendant une vraie acquisition. Garde ici
+ * comme outil de lecture/diagnostic seulement -- daq_gui.py n'expose plus
+ * de case pour le desactiver.
+ *
  * Compilation :
  *   gcc -o set_tdc_header set_tdc_header.c -lCAENComm
  *

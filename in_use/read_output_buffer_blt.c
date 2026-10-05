@@ -75,6 +75,12 @@
  *               analyse a posteriori sans avoir perdu aucune donnee
  *               (contrairement au CSV du mode stream qui ne garde que
  *               les TDC MEASUREMENT).
+ *   -F        : avec -b, n'ecrit pas les mots Filler (type 0x18, bits
+ *               [31:27]=11000) dans le fichier binaire -- padding pur
+ *               utilise pour completer un transfert BLT, aucun contenu
+ *               (manuel §6.2.3) : aucune perte d'info, juste moins
+ *               d'octets inutiles. Desactive par defaut pour ne pas
+ *               changer le comportement "rien n'est perdu" documente de -b.
  *   -o fichier : enregistrement LEGER directement sur disque (independant
  *               de -s/stdout, peut etre utilise en meme temps) : CSV
  *               "trigger_num,trigger_time_s,channel,delay_ns", un header
@@ -134,6 +140,7 @@ static long g_current_event = -1;      /* event_count du dernier GLOBAL HEADER v
 static double g_current_trigger_time = 0.0;  /* horodatage (host, CLOCK_MONOTONIC) du dernier GLOBAL HEADER vu */
 static FILE *g_binary_file = NULL;     /* si non-NULL, dump binaire brut des mots BLT en parallele */
 static FILE *g_light_file = NULL;      /* si non-NULL, CSV leger trigger_num,trigger_time_s,channel,delay_ns */
+static int g_strip_filler = 0;         /* -F : n'ecrit pas les mots Filler (type 0x18) dans -b, aucune perte d'info */
 
 static void handle_sigint(int sig)
 {
@@ -221,10 +228,13 @@ static void account_block(const uint32_t *buf, int n, int verbose,
 {
     int i;
 
-    if (g_binary_file)
+    if (g_binary_file && !g_strip_filler)
         fwrite(buf, sizeof(uint32_t), (size_t)n, g_binary_file);
 
     for (i = 0; i < n; i++) {
+        if (g_binary_file && g_strip_filler && WORD_TYPE(buf[i]) != TYPE_FILLER)
+            fwrite(&buf[i], sizeof(uint32_t), 1, g_binary_file);
+
         if (verbose)
             decode_and_print_word(i, buf[i]);
 
@@ -396,6 +406,8 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
             }
             binary_path = argv[++i];
+        } else if (strcmp(argv[i], "-F") == 0) {
+            g_strip_filler = 1;
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "-o exige un argument fichier\n");
@@ -439,8 +451,8 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Echec ouverture fichier binaire '%s'\n", binary_path);
             return EXIT_FAILURE;
         }
-        fprintf(info_stream(), "Enregistrement binaire actif -> %s (mots 32 bits bruts)\n\n",
-               binary_path);
+        fprintf(info_stream(), "Enregistrement binaire actif -> %s (%s)\n\n",
+               binary_path, g_strip_filler ? "mots 32 bits bruts, SANS les Filler (-F)" : "mots 32 bits bruts, tout compris");
     }
 
     if (light_path) {

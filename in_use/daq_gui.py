@@ -242,7 +242,7 @@ class DaqGui:
         self._sub_check.grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 6))
 
         self.tdc_header_off_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Disable TDC Header/Trailer (lighter recording, loses bunch ID)",
+        ttk.Checkbutton(f, text="Disable TDC Header/Trailer (CONFIRMED BROKEN on this module, 05/10 -- do not use)",
                          variable=self.tdc_header_off_var).grid(
             row=6, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
@@ -645,10 +645,15 @@ class DaqGui:
             return
         hist_env = None
         if self.mode_var.get() == "trigger":
-            width, tw_offset = self._window_ticks()
+            width, _tw_offset = self._window_ticks()
             if "HISTM_RANGE_NS" not in os.environ:
-                hist_env = dict(os.environ)
-                hist_env["HISTM_RANGE_NS"] = f"{tw_offset * 25},{(tw_offset + width) * 25}"
+                try:
+                    offset_ns = int(offset)
+                except ValueError:
+                    offset_ns = None
+                if offset_ns is not None:
+                    hist_env = dict(os.environ)
+                    hist_env["HISTM_RANGE_NS"] = f"{offset_ns},{offset_ns + width * 25}"
         outdir = self.outdir_var.get().strip() or BASE_DIR
         run_name = self.runname_var.get().strip() or "run"
         want_hist = self.live_hist_var.get()
