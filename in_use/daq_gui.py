@@ -324,13 +324,6 @@ class DaqGui:
             return None
         return width, offset
 
-    def _update_stream_offset(self):
-        if self.mode_var.get() != "trigger":
-            self.offset_var.set("0")
-            return
-        win = self._window_ticks()
-        self.offset_var.set(str(win[1] * 25) if win else "?")
-
     def _build_verify(self, parent):
         f = ttk.LabelFrame(parent, text="Verify / utilities", padding=8)
         f.pack(fill=tk.X, pady=(0, 8))
@@ -369,14 +362,10 @@ class DaqGui:
         ttk.Entry(f, textvariable=self.blt_var, width=10).grid(row=2, column=1, sticky="w", padx=4, pady=(4, 0))
 
         ttk.Label(f, text="Stream offset (ns, -s):").grid(row=3, column=0, sticky="w")
-        self.offset_var = tk.StringVar(value="")
-        ttk.Entry(f, textvariable=self.offset_var, width=10, state="readonly").grid(
-            row=3, column=1, sticky="w", padx=4, pady=(4, 0))
-        ttk.Label(f, text="(auto: window offset x 25 ns in trigger matching, 0 in continuous storage)",
+        self.offset_var = tk.StringVar(value="-2000")
+        ttk.Entry(f, textvariable=self.offset_var, width=10).grid(row=3, column=1, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(f, text="(match trigger window offset above; ignored in continuous storage)",
                   font=("TkDefaultFont", 8)).grid(row=4, column=0, columnspan=3, sticky="w")
-        for var in (self.tw_offset_var, self.mode_var):
-            var.trace_add("write", lambda *_: self._update_stream_offset())
-        self._update_stream_offset()
 
         self.acq_target_label = ttk.Label(f, text="Acquire from:")
         self.acq_target_var = tk.StringVar(value="V1290N")
