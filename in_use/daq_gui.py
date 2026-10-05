@@ -241,8 +241,13 @@ class DaqGui:
                                            variable=self.subtraction_var)
         self._sub_check.grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 6))
 
+        self.tdc_header_off_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f, text="Disable TDC Header/Trailer (lighter recording, loses bunch ID)",
+                         variable=self.tdc_header_off_var).grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
         btns = ttk.Frame(f)
-        btns.grid(row=6, column=0, columnspan=2, sticky="we")
+        btns.grid(row=7, column=0, columnspan=2, sticky="we")
         ttk.Button(btns, text="Reset module", command=self.on_reset_module).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(btns, text="Apply configuration", command=self.on_apply_config).pack(side=tk.LEFT, padx=4)
 
@@ -260,6 +265,13 @@ class DaqGui:
         state = "normal" if both else "disabled"
         self.base2_label.configure(state=state)
         self.base2_entry.configure(state=state)
+        if hasattr(self, "acq_target_combo"):
+            if both:
+                self.acq_target_label.grid()
+                self.acq_target_combo.grid()
+            else:
+                self.acq_target_label.grid_remove()
+                self.acq_target_combo.grid_remove()
 
         mtype = self.module_type_var.get()
         if mtype == self.MODULE_N:
@@ -291,6 +303,33 @@ class DaqGui:
                 ("V1290A", base2, self.MAX_CHANNELS[self.MODULE_A]),
             ]
         return [("V1290N", base, self.MAX_CHANNELS[self.MODULE_N])]
+
+    def _acq_target(self):
+        """(module_label, base_address_str) the acquisition reads from. The reader handles a
+        single output buffer, so with 'Both' the user picks which module."""
+        targets = self._targets()
+        if len(targets) == 2:
+            wanted = self.acq_target_var.get()
+            for label, base, _ in targets:
+                if label == wanted:
+                    return label, base
+        return targets[0][0], targets[0][1]
+
+    def _window_ticks(self):
+        """(width, offset) of the trigger window as ints (25 ns ticks), or None if invalid."""
+        try:
+            width = int(self.width_var.get().strip() or "2000")
+            offset = int(self.tw_offset_var.get().strip() or "-2000")
+        except ValueError:
+            return None
+        return width, offset
+
+    def _update_stream_offset(self):
+        if self.mode_var.get() != "trigger":
+            self.offset_var.set("0")
+            return
+        win = self._window_ticks()
+        self.offset_var.set(str(win[1] * 25) if win else "?")
 
     def _build_verify(self, parent):
         f = ttk.LabelFrame(parent, text="Verify / utilities", padding=8)
@@ -330,10 +369,22 @@ class DaqGui:
         ttk.Entry(f, textvariable=self.blt_var, width=10).grid(row=2, column=1, sticky="w", padx=4, pady=(4, 0))
 
         ttk.Label(f, text="Stream offset (ns, -s):").grid(row=3, column=0, sticky="w")
-        self.offset_var = tk.StringVar(value="-2000")
-        ttk.Entry(f, textvariable=self.offset_var, width=10).grid(row=3, column=1, sticky="w", padx=4, pady=(4, 0))
-        ttk.Label(f, text="(match trigger window offset above; ignored in continuous storage)",
+        self.offset_var = tk.StringVar(value="")
+        ttk.Entry(f, textvariable=self.offset_var, width=10, state="readonly").grid(
+            row=3, column=1, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(f, text="(auto: window offset x 25 ns in trigger matching, 0 in continuous storage)",
                   font=("TkDefaultFont", 8)).grid(row=4, column=0, columnspan=3, sticky="w")
+        for var in (self.tw_offset_var, self.mode_var):
+            var.trace_add("write", lambda *_: self._update_stream_offset())
+        self._update_stream_offset()
+
+        self.acq_target_label = ttk.Label(f, text="Acquire from:")
+        self.acq_target_var = tk.StringVar(value="V1290N")
+        self.acq_target_combo = ttk.Combobox(f, textvariable=self.acq_target_var, state="readonly", width=8,
+                                              values=["V1290N", "V1290A"])
+        self.acq_target_label.grid(row=2, column=2, sticky="e", padx=(8, 2), pady=(4, 0))
+        self.acq_target_combo.grid(row=2, column=3, sticky="w", pady=(4, 0))
+        self._on_module_type_change()
 
         self.save_binary_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Save raw binary (<run>.bin, replayable with decode_binary.py)",
@@ -453,7 +504,16 @@ class DaqGui:
     # ------------------------------------------------------------------ #
     # Button callbacks -- configuration
     # ------------------------------------------------------------------ #
+    def _refuse_if_acquiring(self, what):
+        if self.acq_proc1 is not None:
+            messagebox.showwarning(what, f"{what} would clear the module's data and reprogram it "
+                                          "while an acquisition is running. Stop the acquisition first.")
+            return True
+        return False
+
     def on_reset_module(self):
+        if self._refuse_if_acquiring("Reset module"):
+            return
         if not messagebox.askyesno("Reset module",
                                     "This resets the module to power-on defaults "
                                     "(clears channels and trigger config). Continue?"):
@@ -463,6 +523,20 @@ class DaqGui:
         self.run_sequence(cmds, tag="Reset module")
 
     def on_apply_config(self):
+        if self._refuse_if_acquiring("Apply configuration"):
+            return
+        if self.mode_var.get() == "trigger":
+            win = self._window_ticks()
+            if win is None or not all(v.get().strip().lstrip("-").isdigit()
+                                       for v in (self.smargin_var, self.rmargin_var)):
+                messagebox.showerror("Apply configuration",
+                                      "Window width/offset and margins must be integers (25 ns ticks).")
+                return
+            if not -2048 <= win[1] <= 2047 or not 1 <= win[0] <= 4095:
+                messagebox.showerror("Apply configuration",
+                                      "Out of range (12-bit fields): width 1..4095, offset -2048..2047 ticks "
+                                      "(1 tick = 25 ns).")
+                return
         pid = self.pid_var.get().strip()
         channels = self.channels_var.get().strip()
         try:
@@ -484,6 +558,9 @@ class DaqGui:
                     cmds.append([bin_path("enable_channels_set"), pid, base] + in_range)
             else:
                 cmds.append([bin_path("enable_channels"), pid, base])
+
+            if self.tdc_header_off_var.get():
+                cmds.append([bin_path("set_tdc_header"), pid, base, "off"])
 
             if self.mode_var.get() == "trigger":
                 width = self.width_var.get().strip() or "2000"
@@ -571,9 +648,18 @@ class DaqGui:
             return
 
         pid = self.pid_var.get().strip()
-        base = self.base_var.get().strip()
+        acq_label, base = self._acq_target()
         blt = self.blt_var.get().strip() or "4096"
-        offset = self.offset_var.get().strip() or "-2000"
+        offset = self.offset_var.get().strip()
+        if offset == "?":
+            messagebox.showerror("Acquisition", "Window offset is not an integer -- cannot derive the stream offset.")
+            return
+        hist_env = None
+        if self.mode_var.get() == "trigger":
+            width, tw_offset = self._window_ticks()
+            if "HISTM_RANGE_NS" not in os.environ:
+                hist_env = dict(os.environ)
+                hist_env["HISTM_RANGE_NS"] = f"{tw_offset * 25},{(tw_offset + width) * 25}"
         outdir = self.outdir_var.get().strip() or BASE_DIR
         run_name = self.runname_var.get().strip() or "run"
         want_hist = self.live_hist_var.get()
@@ -597,9 +683,8 @@ class DaqGui:
                 sipm_env["SIPM_D_BARS"] = ",".join(d_bars)
 
         if self.module_type_var.get() == self.MODULE_BOTH:
-            self.log("NOTE: 'Both' module model selected, but acquisition reads from a single "
-                      "output buffer -- reading from base address 1 only (V1290N). Run acquisition "
-                      "separately against base address 2 for the V1290A.")
+            self.log(f"NOTE: 'Both' selected -- acquisition reads a single output buffer: {acq_label} "
+                      f"at {base}.")
 
         exe = bin_path("read_output_buffer_blt")
         if not self._check_exe(exe):
@@ -661,7 +746,7 @@ class DaqGui:
         if use_live:
             wanted = []
             if want_hist:
-                wanted.append(("live_histogram_multi.py", None, "hist"))
+                wanted.append(("live_histogram_multi.py", hist_env, "hist"))
             if want_matrix:
                 wanted.append(("live_sipm_matrix.py", sipm_env, "matrix"))
 
