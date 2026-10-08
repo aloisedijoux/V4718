@@ -24,6 +24,7 @@ import signal
 import subprocess
 import threading
 import queue
+import time
 from datetime import datetime
 
 import tkinter as tk
@@ -74,7 +75,7 @@ class DaqGui:
     def _open_session_log(self):
         os.makedirs(LOG_DIR, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(LOG_DIR, f"daq_gui_{ts}.log")
+        path = os.path.join(LOG_DIR, f"daq_gui_{ts}.txt")
         self.session_log_path = path
         try:
             self.session_log_fh = open(path, "a", buffering=1)
@@ -92,7 +93,9 @@ class DaqGui:
             except queue.Empty:
                 break
             drained = True
-            ts = datetime.now().strftime("%H:%M:%S")
+            now_ns = time.time_ns()
+            sec, nsec = divmod(now_ns, 1_000_000_000)
+            ts = datetime.fromtimestamp(sec).strftime("%H:%M:%S") + f".{nsec:09d}"
             line = f"[{ts}] {msg}"
             self.log_text.insert(tk.END, line + "\n")
             if self.session_log_fh:
